@@ -1,0 +1,42 @@
+appId: com.streamgrab.browser
+productName: StreamGrab Browser
+directories:
+  buildResources: resources
+  output: release
+files:
+  - '!**/.vscode/*'
+  - '!**/.github/*'
+  - '!docs/*'
+  - '!src/*'
+  - '!tests/*'
+  - '!scripts/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!vitest.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!*.cmd'
+  - '!data/*'
+  - '!downloads/*'
+  - '!.portable-env/*'
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - '*.exe'
+      - '*.dll'
+asarUnpack:
+  - '**/*.node'
+win:
+  executableName: StreamGrabBrowser
+  signAndEditExecutable: false
+  target:
+    - target: dir
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+portable:
+  artifactName: StreamGrabBrowser-Portable-${version}.exe
+  requestExecutionLevel: user
+npmRebuild: false

@@ -1,0 +1,44 @@
+{
+  "name": "streamgrab-browser",
+  "version": "1.0.0",
+  "description": "Portable multi-tab browser, native adblocker, dual-layer media sniffer, and Power Trio stream downloader",
+  "main": "./out/main/index.js",
+  "author": "StreamGrab",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "setup:binaries": "node scripts/setup-binaries.mjs",
+    "package:dir": "electron-vite build && electron-builder --win dir --publish never",
+    "package:exe": "electron-vite build && electron-builder --win portable --publish never",
+    "package:portable": "electron-vite build && electron-builder --win portable dir --publish never",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.13.4",
+    "clsx": "^2.1.1",
+    "cross-fetch": "^4.1.0",
+    "fast-xml-parser": "^5.2.5",
+    "lucide-react": "^0.511.0",
+    "tailwind-merge": "^3.3.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.7",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.4",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^36.3.2",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^3.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.7",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.3"
+  }
+}

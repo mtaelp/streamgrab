@@ -1,0 +1,101 @@
+name: Build & Release Portable EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_draft_release:
+        description: 'Create a draft GitHub Release (even without a git tag)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-portable:
+    name: Windows x64 Single-File Portable EXE
+    runs-on: windows-latest
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js 24 (includes built-in node:sqlite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download & verify companion media binaries (FFmpeg, FFprobe, N_m3u8DL-RE, yt-dlp)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/setup-binaries.mjs --force --ci
+
+      - name: Run TypeScript typecheck
+        run: pnpm run typecheck
+
+      - name: Run unit & E2E media pipeline tests
+        run: pnpm test
+
+      - name: Sync version from git tag (when triggered by v* tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tagVer = "${{ github.ref_name }}".TrimStart('v')
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkg.version = $tagVer
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json -Encoding UTF8
+          Write-Host "Building version $tagVer"
+
+      - name: Build single-file portable .exe
+        run: pnpm run package:exe
+
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $exeFiles = Get-ChildItem -Path release -Filter "StreamGrabBrowser-Portable-*.exe"
+          if (-not $exeFiles) {
+            throw "Portable .exe was not found in release/"
+          }
+          $lines = foreach ($f in $exeFiles) {
+            $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          $lines | Set-Content -Path release\SHA256SUMS.txt -Encoding UTF8
+          Get-Content release\SHA256SUMS.txt
+
+      - name: Upload portable .exe as GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamGrabBrowser-Portable-win-x64
+          path: |
+            release/StreamGrabBrowser-Portable-*.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to GitHub Releases (on v* tag or manual draft request)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_draft_release == true)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v1.0.0-draft-{0}', github.run_number) }}
+          draft: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          generate_release_notes: true
+          files: |
+            release/StreamGrabBrowser-Portable-*.exe
+            release/SHA256SUMS.txt

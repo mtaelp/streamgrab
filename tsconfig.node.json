@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node", "electron-vite/node"],
+    "outDir": "./dist-ts/node",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    }
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "tests/**/*"
+  ]
+}

@@ -1,0 +1,12 @@
+packages:
+  - '.'
+
+storeDir: .portable-env/pnpm-store
+cacheDir: .portable-env/pnpm-cache
+nodeLinker: hoisted
+confirmModulesPurge: false
+
+allowBuilds:
+  electron: true
+  esbuild: true
+  electron-winstaller: true

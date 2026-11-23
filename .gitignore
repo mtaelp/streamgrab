@@ -1,0 +1,53 @@
+# Dependencies & portable dev caches
+node_modules/
+/.portable-env/
+
+# Build & packaging outputs
+/out/
+/dist/
+/dist-ts/
+/release/
+/coverage/
+
+# Portable user runtime state (cookies, browsing history, SQLite DB, captured manifests & logs)
+/data/
+/downloads/
+
+# Companion media binaries (fetched at build/setup time via `pnpm run setup:binaries`)
+resources/bin/*
+!resources/bin/.gitkeep
+
+# Defensive patterns against accidental sensitive or runtime dumps anywhere in the repo
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.jsonl
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*cookie*.txt
+captured-manifests/
+.env
+.env.*
+!.env.example
+
+# Media / partial download artifacts (note: never ignore *.ts because of TypeScript)
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.mp3
+*.part
+
+# OS & editor metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
