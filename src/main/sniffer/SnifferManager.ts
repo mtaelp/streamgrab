@@ -41,6 +41,7 @@ interface AttachedTabContext {
   lastVideoWidth?: number
   lastPoster?: string
   lastPageTitle?: string
+  lastExtractorCanonicalUrl?: string
   autoAnalyzedUrls: Set<string>
 }
 
@@ -156,8 +157,11 @@ export class SnifferManager {
   public handleTabNavigation(tabId: string, newUrl: string): void {
     this.clearMediaForTab(tabId)
     const ctx = this.contextsByTabId.get(tabId)
-    if (ctx && isKnownExtractorSite(newUrl) && !ctx.autoAnalyzedUrls.has(newUrl)) {
-      ctx.autoAnalyzedUrls.add(newUrl)
+    if (!ctx) return
+    const canonical = newUrl.split('#')[0]
+    ctx.lastExtractorCanonicalUrl = canonical
+    if (isKnownExtractorSite(newUrl)) {
+      ctx.autoAnalyzedUrls.add(canonical)
       void this.deepAnalyzeWithYtDlp(tabId, newUrl)
     }
   }
@@ -210,8 +214,14 @@ export class SnifferManager {
 
     webContents.on('did-navigate-in-page', (_ev, url, isMainFrame) => {
       if (!isMainFrame) return
-      if (isKnownExtractorSite(url) && !ctx.autoAnalyzedUrls.has(url)) {
-        ctx.autoAnalyzedUrls.add(url)
+      const canonical = url.split('#')[0]
+      if (canonical === ctx.lastExtractorCanonicalUrl) return
+      ctx.lastExtractorCanonicalUrl = canonical
+
+      if (isKnownExtractorSite(url)) {
+        // SPA video transition (e.g., clicking another YouTube video or Short without a full reload)
+        this.clearMediaForTab(tabId)
+        ctx.autoAnalyzedUrls.add(canonical)
         void this.deepAnalyzeWithYtDlp(tabId, url)
       }
     })
@@ -422,10 +432,13 @@ export class SnifferManager {
         )
       }
 
-      // Direct progressive MP4/MKV/WebM/MP3 capture (only when clearly a real progressive media file, not a tiny segment)
+      // Direct progressive MP4/MKV/WebM/MP3 capture (exclude adaptive MSE byte-range chunks like googlevideo.com/videoplayback)
+      const isAdaptiveChunkEndpoint =
+        /googlevideo\.com\/videoplayback|([?&](bytestart|byteend)=)|([?&]range=\d+-\d+)/i.test(url)
       const isDirectMedia =
         (DIRECT_MEDIA_MIME_REGEX.test(mimeType) || DIRECT_MEDIA_EXT_REGEX.test(url)) &&
         !isExplicitManifest &&
+        !isAdaptiveChunkEndpoint &&
         !/\.(ts|m4s)(\?|#|$)/i.test(url)
 
       const minBytes = this.db.getSettings().minDirectMediaBytes

@@ -9,7 +9,14 @@ import type {
   VideoTrackOption
 } from '@shared/types'
 import type { BinaryManager } from '../binaries/BinaryManager'
+import {
+  getCachedNoCheckCertificates,
+  isTlsCertVerifyError,
+  markNeedsNoCheckCertificates,
+  resolveYtDlpNodeRuntimeArg
+} from '../binaries/YtDlpRuntimeHelper'
 import { computeCleanChromeUserAgent } from '../browser/StealthNormalizer'
+import { diagLogger } from '../logger/DiagnosticLogger'
 import { CookieExporter } from './CookieExporter'
 
 const CIPHER_EXTRACTOR_DOMAINS = [
@@ -36,12 +43,20 @@ export function isKnownExtractorSite(url: string): boolean {
     if (!CIPHER_EXTRACTOR_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
       return false
     }
-    // Skip bare homepages so we only probe actual media/watch URLs automatically
-    if (
-      (host === 'youtube.com' || host === 'm.youtube.com') &&
-      (parsed.pathname === '/' || parsed.pathname.startsWith('/results'))
-    ) {
-      return false
+    // Skip bare homepages / search / feed pages so we only auto-probe actual video/watch/shorts URLs
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (
+        parsed.pathname === '/' ||
+        parsed.pathname.startsWith('/results') ||
+        parsed.pathname.startsWith('/feed') ||
+        parsed.pathname.startsWith('/@') ||
+        parsed.pathname.startsWith('/channel/')
+      ) {
+        return false
+      }
+      if (parsed.pathname === '/watch' && !parsed.searchParams.get('v')) {
+        return false
+      }
     }
     return parsed.pathname.length > 1
   } catch {
@@ -61,6 +76,7 @@ interface YtDlpFormatJson {
   filesize?: number
   filesize_approx?: number
   language?: string
+  language_preference?: number
   format_note?: string
 }
 
@@ -82,6 +98,53 @@ export class YtDlpInspector {
     this.binaries = binaries
   }
 
+  private runDumpSingleJson(
+    ytdlpPath: string,
+    cookieJarPath: string,
+    url: string,
+    noCheckCert: boolean
+  ): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const args = ['--dump-single-json', '--no-playlist', '--no-warnings']
+      const jsRuntimeArg = resolveYtDlpNodeRuntimeArg()
+      if (jsRuntimeArg) {
+        args.push('--js-runtimes', jsRuntimeArg)
+      }
+      if (noCheckCert) {
+        args.push('--no-check-certificates')
+      }
+      args.push('--cookies', cookieJarPath, '--user-agent', computeCleanChromeUserAgent(), url)
+
+      const proc = spawn(ytdlpPath, args, { windowsHide: true })
+      let stdout = ''
+      let stderr = ''
+
+      const timer = setTimeout(() => {
+        proc.kill()
+        reject(new Error('yt-dlp metadata probe timed out'))
+      }, 28000)
+
+      proc.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8')
+      })
+      proc.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+      })
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+      proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (code === 0 && stdout.trim()) {
+          resolve(stdout)
+        } else {
+          reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`))
+        }
+      })
+    })
+  }
+
   public async inspectUrl(opts: {
     url: string
     tabId: string
@@ -94,46 +157,30 @@ export class YtDlpInspector {
     const cookieJarPath = await CookieExporter.exportNetscapeCookieJar(opts.session, [opts.url])
 
     try {
-      const rawJson = await new Promise<string>((resolve, reject) => {
-        const args = [
-          '--dump-single-json',
-          '--no-playlist',
-          '--no-warnings',
-          '--cookies',
+      let rawJson: string
+      try {
+        rawJson = await this.runDumpSingleJson(
+          ytdlpRes.path,
           cookieJarPath,
-          '--user-agent',
-          computeCleanChromeUserAgent(),
-          opts.url
-        ]
-
-        const proc = spawn(ytdlpRes.path!, args, { windowsHide: true })
-        let stdout = ''
-        let stderr = ''
-
-        const timer = setTimeout(() => {
-          proc.kill()
-          reject(new Error('yt-dlp metadata probe timed out'))
-        }, 25000)
-
-        proc.stdout.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString('utf8')
-        })
-        proc.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString('utf8')
-        })
-        proc.on('error', (err) => {
-          clearTimeout(timer)
-          reject(err)
-        })
-        proc.on('close', (code) => {
-          clearTimeout(timer)
-          if (code === 0 && stdout.trim()) {
-            resolve(stdout)
-          } else {
-            reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`))
-          }
-        })
-      })
+          opts.url,
+          getCachedNoCheckCertificates()
+        )
+      } catch (firstErr) {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr)
+        if (!getCachedNoCheckCertificates() && isTlsCertVerifyError(msg)) {
+          // Local OS Root CA / Antivirus HTTPS shield (e.g. Avast WebShield) not in PyInstaller certifi bundle
+          markNeedsNoCheckCertificates()
+          diagLogger.log(
+            'MANIFEST_PARSED',
+            'ytdlp_tls_fallback_retry',
+            { reason: msg.slice(0, 240) },
+            { tabId: opts.tabId, url: opts.url }
+          )
+          rawJson = await this.runDumpSingleJson(ytdlpRes.path, cookieJarPath, opts.url, true)
+        } else {
+          throw firstErr
+        }
+      }
 
       const info = JSON.parse(rawJson) as YtDlpSingleJson
       const formats = info.formats || []
@@ -181,22 +228,37 @@ export class YtDlpInspector {
         })
       }
 
-      // Extract distinct audio language tracks if offered (e.g., multi-language YouTube tracks)
+      // Extract distinct audio language tracks (prioritizing creator's original track ahead of AI dubs)
+      const audioFormats = formats
+        .filter((f) => (!f.vcodec || f.vcodec === 'none') && f.acodec && f.acodec !== 'none')
+        .sort((a, b) => {
+          const prefDiff = (b.language_preference ?? 0) - (a.language_preference ?? 0)
+          if (prefDiff !== 0) return prefDiff
+          const aOrig = /original/i.test(a.format_note || '') ? 1 : 0
+          const bOrig = /original/i.test(b.format_note || '') ? 1 : 0
+          if (bOrig !== aOrig) return bOrig - aOrig
+          return (b.tbr ?? 0) - (a.tbr ?? 0)
+        })
+
       const seenLangs = new Set<string>()
       const audioTracks: AudioTrackOption[] = []
-      for (const f of formats) {
-        const isAudioOnly = (!f.vcodec || f.vcodec === 'none') && f.acodec && f.acodec !== 'none'
-        if (!isAudioOnly) continue
+      for (const f of audioFormats) {
         const lang = f.language || 'default'
         if (seenLangs.has(lang)) continue
         seenLangs.add(lang)
+        const isOriginal =
+          (f.language_preference ?? 0) > 0 || /original/i.test(f.format_note || '')
         audioTracks.push({
           id: `ytdlp-a-${lang}`,
-          label: lang === 'default' ? 'Default Audio (Best)' : `Audio (${lang})`,
+          label:
+            lang === 'default'
+              ? 'Default Audio (Best)'
+              : `Audio (${lang})${isOriginal ? ' • Original' : ''}`,
           language: lang === 'default' ? undefined : lang,
           codecs: f.acodec,
+          isDefault: audioTracks.length === 0,
           selector:
-            lang === 'default' ? 'bestaudio' : `bestaudio[language=${lang}]/bestaudio`
+            lang === 'default' ? 'bestaudio' : `bestaudio[language=${lang}]`
         })
       }
 
@@ -209,6 +271,19 @@ export class YtDlpInspector {
           language: lang,
           selector: lang
         }))
+
+      diagLogger.log(
+        'MANIFEST_PARSED',
+        'ytdlp_stream_detected',
+        {
+          title: info.title,
+          durationSec: info.duration,
+          heights,
+          audioCount: audioTracks.length,
+          subtitleCount: subtitleTracks.length
+        },
+        { tabId: opts.tabId, url: opts.url }
+      )
 
       return {
         id: crypto.randomUUID(),
@@ -234,7 +309,13 @@ export class YtDlpInspector {
         mediaSignature: `ytdlp:${info.id || opts.url}`,
         capturedAt: Date.now()
       }
-    } catch {
+    } catch (err) {
+      diagLogger.log(
+        'MANIFEST_PARSED',
+        'ytdlp_inspect_error',
+        { error: err instanceof Error ? err.message.slice(0, 400) : String(err) },
+        { tabId: opts.tabId, url: opts.url }
+      )
       return null
     } finally {
       await fs.promises.rm(cookieJarPath, { force: true }).catch(() => {})

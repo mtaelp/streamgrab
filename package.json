@@ -1,6 +1,6 @@
 {
   "name": "streamgrab-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Portable multi-tab browser, native adblocker, dual-layer media sniffer, and Power Trio stream downloader",
   "main": "./out/main/index.js",
   "author": "StreamGrab",
