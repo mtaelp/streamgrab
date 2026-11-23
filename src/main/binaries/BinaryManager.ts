@@ -9,12 +9,36 @@ import { runtimeFetch } from '../portable/RuntimeFetch'
 
 type BinaryName = BinaryStatus['name']
 
+const IS_WIN = process.platform === 'win32'
+const IS_MAC = process.platform === 'darwin'
+
+function binFilename(base: string): string {
+  return IS_WIN ? `${base}.exe` : base
+}
+
 const BINARY_SPECS: Array<{ name: BinaryName; exe: string; versionArgs: string[] }> = [
-  { name: 'ffmpeg', exe: 'ffmpeg.exe', versionArgs: ['-version'] },
-  { name: 'ffprobe', exe: 'ffprobe.exe', versionArgs: ['-version'] },
-  { name: 'N_m3u8DL-RE', exe: 'N_m3u8DL-RE.exe', versionArgs: ['--version'] },
-  { name: 'yt-dlp', exe: 'yt-dlp.exe', versionArgs: ['--version'] }
+  { name: 'ffmpeg', exe: binFilename('ffmpeg'), versionArgs: ['-version'] },
+  { name: 'ffprobe', exe: binFilename('ffprobe'), versionArgs: ['-version'] },
+  { name: 'N_m3u8DL-RE', exe: binFilename('N_m3u8DL-RE'), versionArgs: ['--version'] },
+  { name: 'yt-dlp', exe: binFilename('yt-dlp'), versionArgs: ['--version'] }
 ]
+
+function ensureExecutablePermission(filePath: string): void {
+  if (IS_WIN) return
+  try {
+    fs.chmodSync(filePath, 0o755)
+  } catch {
+    // ignore permission errors on read-only bundles
+  }
+  if (IS_MAC) {
+    try {
+      spawnSync('xattr', ['-cr', filePath], { stdio: 'ignore' })
+      spawnSync('codesign', ['--force', '--sign', '-', filePath], { stdio: 'ignore' })
+    } catch {
+      // ignore if codesign/xattr unavailable
+    }
+  }
+}
 
 export class BinaryManager {
   public resolveBinaryPath(name: BinaryName): { path: string | null; isPortableLocal: boolean } {
@@ -27,9 +51,9 @@ export class BinaryManager {
         : null
 
     // Candidate priority:
-    // 1. User-updated persistent binary in <dataRoot>/bin (survives single-file .exe restarts)
-    // 2. Portable <portableRoot>/resources/bin (dev mode & unpacked folder builds)
-    // 3. Bundled extraResources <process.resourcesPath>/bin (single-file portable .exe builds)
+    // 1. User-updated persistent binary in <dataRoot>/bin
+    // 2. Portable <portableRoot>/resources/bin (dev mode & unpacked builds)
+    // 3. Bundled extraResources <process.resourcesPath>/bin (packaged .exe / .app builds)
     // 4. Configured binariesDir fallback
     const localCandidates = [
       path.join(paths.dataRoot, 'bin', spec.exe),
@@ -44,8 +68,13 @@ export class BinaryManager {
       }
     }
 
-    // 5. System PATH fallback
-    const whereRes = spawnSync('where.exe', [spec.exe], { encoding: 'utf8' })
+    // 5. System PATH / Homebrew fallback
+    const lookupCmd = IS_WIN ? 'where.exe' : 'which'
+    const lookupEnv = IS_MAC
+      ? { ...process.env, PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` }
+      : process.env
+
+    const whereRes = spawnSync(lookupCmd, [spec.exe], { encoding: 'utf8', env: lookupEnv })
     if (whereRes.status === 0 && whereRes.stdout) {
       const found = whereRes.stdout
         .split(/\r?\n/)
@@ -124,15 +153,14 @@ export class BinaryManager {
     force = false
   ): Promise<BinaryHealthReport> {
     const paths = resolvePortablePaths()
-    const isEphemeralSingleExe =
+    const isPackagedBundle =
       Boolean(process.env.PORTABLE_EXECUTABLE_DIR) ||
       (typeof process.resourcesPath === 'string' &&
         process.resourcesPath.length > 0 &&
         paths.binariesDir.toLowerCase().startsWith(process.resourcesPath.toLowerCase()))
 
-    // When running from a single-file portable .exe, save user-triggered binary updates to <dataRoot>/bin
-    // so they persist permanently next to the .exe rather than inside %TEMP%.
-    let targetDir = isEphemeralSingleExe ? path.join(paths.dataRoot, 'bin') : paths.binariesDir
+    // When running from a packaged .exe or macOS .app bundle, save user-triggered updates to <dataRoot>/bin
+    let targetDir = isPackagedBundle ? path.join(paths.dataRoot, 'bin') : paths.binariesDir
     try {
       fs.mkdirSync(targetDir, { recursive: true })
       fs.accessSync(targetDir, fs.constants.W_OK)
@@ -172,9 +200,15 @@ export class BinaryManager {
       return null
     }
 
+    const tarBin = IS_WIN ? 'tar.exe' : 'tar'
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+
     // 1. FFmpeg & FFprobe
-    const ffmpegDest = path.join(targetDir, 'ffmpeg.exe')
-    const ffprobeDest = path.join(targetDir, 'ffprobe.exe')
+    const ffmpegExe = binFilename('ffmpeg')
+    const ffprobeExe = binFilename('ffprobe')
+    const ffmpegDest = path.join(targetDir, ffmpegExe)
+    const ffprobeDest = path.join(targetDir, ffprobeExe)
+
     if (force || !fs.existsSync(ffmpegDest) || !fs.existsSync(ffprobeDest)) {
       const existingFfmpeg = this.resolveBinaryPath('ffmpeg').path
       const existingFfprobe = this.resolveBinaryPath('ffprobe').path
@@ -186,7 +220,18 @@ export class BinaryManager {
         if (path.resolve(existingFfprobe) !== path.resolve(ffprobeDest)) {
           fs.copyFileSync(existingFfprobe, ffprobeDest)
         }
-      } else {
+      } else if (IS_MAC) {
+        await downloadTo(
+          `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-${arch}`,
+          ffmpegDest,
+          `FFmpeg macOS (${arch})`
+        )
+        await downloadTo(
+          `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffprobe-darwin-${arch}`,
+          ffprobeDest,
+          `FFprobe macOS (${arch})`
+        )
+      } else if (IS_WIN) {
         const zipPath = path.join(tmpDir, 'ffmpeg-win64.zip')
         const extractDir = path.join(tmpDir, 'ffmpeg-extract')
         fs.rmSync(extractDir, { recursive: true, force: true })
@@ -197,30 +242,47 @@ export class BinaryManager {
           'FFmpeg Win64 GPL'
         )
         onProgress?.('Extracting FFmpeg & FFprobe...')
-        execFileSync('tar.exe', ['-xf', zipPath, '-C', extractDir], { windowsHide: true })
-        const f1 = findRecursive(extractDir, 'ffmpeg.exe')
-        const f2 = findRecursive(extractDir, 'ffprobe.exe')
+        execFileSync(tarBin, ['-xf', zipPath, '-C', extractDir], { windowsHide: true })
+        const f1 = findRecursive(extractDir, ffmpegExe)
+        const f2 = findRecursive(extractDir, ffprobeExe)
         if (f1 && f2) {
           fs.copyFileSync(f1, ffmpegDest)
           fs.copyFileSync(f2, ffprobeDest)
         }
         fs.rmSync(extractDir, { recursive: true, force: true })
         fs.rmSync(zipPath, { force: true })
+      } else {
+        await downloadTo(
+          `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-linux-${arch}`,
+          ffmpegDest,
+          `FFmpeg Linux (${arch})`
+        )
+        await downloadTo(
+          `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffprobe-linux-${arch}`,
+          ffprobeDest,
+          `FFprobe Linux (${arch})`
+        )
       }
+      ensureExecutablePermission(ffmpegDest)
+      ensureExecutablePermission(ffprobeDest)
     }
 
-    // 2. yt-dlp.exe
-    const ytdlpDest = path.join(targetDir, 'yt-dlp.exe')
+    // 2. yt-dlp
+    const ytdlpExe = binFilename('yt-dlp')
+    const ytdlpDest = path.join(targetDir, ytdlpExe)
     if (force || !fs.existsSync(ytdlpDest)) {
+      const ytdlpAsset = IS_WIN ? 'yt-dlp.exe' : IS_MAC ? 'yt-dlp_macos' : 'yt-dlp_linux'
       await downloadTo(
-        'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
+        `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ytdlpAsset}`,
         ytdlpDest,
-        'yt-dlp.exe'
+        ytdlpAsset
       )
+      ensureExecutablePermission(ytdlpDest)
     }
 
-    // 3. N_m3u8DL-RE.exe
-    const nmDest = path.join(targetDir, 'N_m3u8DL-RE.exe')
+    // 3. N_m3u8DL-RE
+    const nmExe = binFilename('N_m3u8DL-RE')
+    const nmDest = path.join(targetDir, nmExe)
     if (force || !fs.existsSync(nmDest)) {
       onProgress?.('Checking latest N_m3u8DL-RE release...')
       const apiRes = await runtimeFetch('https://api.github.com/repos/nilaoda/N_m3u8DL-RE/releases/latest', {
@@ -235,26 +297,32 @@ export class BinaryManager {
       const release = (await apiRes.json()) as {
         assets?: Array<{ name: string; browser_download_url: string }>
       }
-      const asset = (release.assets || []).find(
-        (a) => /win-x64.*\.zip$/i.test(a.name) && !/arm/i.test(a.name)
-      )
+
+      const assetPattern = IS_WIN
+        ? new RegExp(`win-${arch}.*\\.zip$`, 'i')
+        : IS_MAC
+          ? new RegExp(`osx-${arch}.*\\.(tar\\.gz|zip)$`, 'i')
+          : new RegExp(`linux-${arch}.*\\.(tar\\.gz|zip)$`, 'i')
+
+      const asset = (release.assets || []).find((a) => assetPattern.test(a.name))
       if (!asset) {
-        throw new Error('Could not find win-x64 asset for N_m3u8DL-RE')
+        throw new Error(`Could not find ${process.platform}-${arch} asset for N_m3u8DL-RE`)
       }
-      const zipPath = path.join(tmpDir, asset.name)
+      const archivePath = path.join(tmpDir, asset.name)
       const extractDir = path.join(tmpDir, 'nm3u8-extract')
       fs.rmSync(extractDir, { recursive: true, force: true })
       fs.mkdirSync(extractDir, { recursive: true })
-      await downloadTo(asset.browser_download_url, zipPath, asset.name)
+      await downloadTo(asset.browser_download_url, archivePath, asset.name)
       onProgress?.('Extracting N_m3u8DL-RE...')
-      execFileSync('tar.exe', ['-xf', zipPath, '-C', extractDir], { windowsHide: true })
-      const exe = findRecursive(extractDir, 'N_m3u8DL-RE.exe')
+      execFileSync(tarBin, ['-xf', archivePath, '-C', extractDir], { windowsHide: true })
+      const exe = findRecursive(extractDir, nmExe)
       if (!exe) {
-        throw new Error('N_m3u8DL-RE.exe missing inside downloaded archive')
+        throw new Error(`${nmExe} missing inside downloaded archive`)
       }
       fs.copyFileSync(exe, nmDest)
+      ensureExecutablePermission(nmDest)
       fs.rmSync(extractDir, { recursive: true, force: true })
-      fs.rmSync(zipPath, { force: true })
+      fs.rmSync(archivePath, { force: true })
     }
 
     onProgress?.('All portable binaries verified and ready!')

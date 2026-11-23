@@ -28,12 +28,29 @@ function canWriteDirectory(dirPath: string): boolean {
   }
 }
 
+function defaultSystemAppDataRoot(app?: App): string {
+  if (app) {
+    return path.join(app.getPath('appData'), 'StreamGrabBrowser')
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'StreamGrabBrowser')
+  }
+  if (process.platform === 'win32') {
+    const base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+    return path.join(base, 'StreamGrabBrowser-Portable')
+  }
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  return path.join(xdg, 'StreamGrabBrowser')
+}
+
 export function resolvePortablePaths(app?: App, customRoot?: string): PortablePathConfig {
   if (cachedConfig && !customRoot) {
     return cachedConfig
   }
 
   let portableRoot: string
+  let isStandardMacApplicationsInstall = false
+
   if (customRoot) {
     portableRoot = path.resolve(customRoot)
   } else if (process.env.STREAMGRAB_PORTABLE_ROOT) {
@@ -42,18 +59,35 @@ export function resolvePortablePaths(app?: App, customRoot?: string): PortablePa
     // Set automatically by electron-builder's single-file Windows 'portable' .exe wrapper
     portableRoot = path.resolve(process.env.PORTABLE_EXECUTABLE_DIR)
   } else if (app && app.isPackaged) {
-    portableRoot = path.dirname(app.getPath('exe'))
+    if (process.platform === 'darwin') {
+      // exe is <parent>/StreamGrab Browser.app/Contents/MacOS/StreamGrabBrowser
+      const appBundleParent = path.resolve(app.getPath('exe'), '..', '..', '..', '..')
+      portableRoot = appBundleParent
+      const normalizedParent = appBundleParent.replace(/\/+$/, '')
+      const userApps = path.join(os.homedir(), 'Applications')
+      if (normalizedParent === '/Applications' || normalizedParent === userApps) {
+        isStandardMacApplicationsInstall = true
+      }
+    } else {
+      portableRoot = path.dirname(app.getPath('exe'))
+    }
   } else {
     portableRoot = process.cwd()
   }
 
-  // Ensure portableRoot is writable; if launched from a read-only directory (e.g. Program Files without elevation),
-  // gracefully fall back to AppData\Roaming\StreamGrabBrowser-Portable rather than crashing on startup.
+  // Ensure storageRoot is writable; on macOS /Applications installs or read-only directories (e.g. mounted .dmg or Program Files),
+  // fall back cleanly to OS user application support & Downloads directories.
   let storageRoot = portableRoot
-  if (!customRoot && !canWriteDirectory(path.join(storageRoot, 'data'))) {
-    const appDataBase =
-      (app ? app.getPath('appData') : process.env.APPDATA) || path.join(os.homedir(), 'AppData', 'Roaming')
-    storageRoot = path.join(appDataBase, 'StreamGrabBrowser-Portable')
+  let defaultDownloadsDir = path.join(storageRoot, 'downloads')
+
+  if (
+    !customRoot &&
+    (isStandardMacApplicationsInstall || !canWriteDirectory(path.join(storageRoot, 'data')))
+  ) {
+    storageRoot = defaultSystemAppDataRoot(app)
+    defaultDownloadsDir = app
+      ? path.join(app.getPath('downloads'), 'StreamGrab')
+      : path.join(os.homedir(), 'Downloads', 'StreamGrab')
   }
 
   const dataRoot = path.join(storageRoot, 'data')
@@ -63,7 +97,6 @@ export function resolvePortablePaths(app?: App, customRoot?: string): PortablePa
   const manifestsCacheDir = path.join(tempDir, 'manifests')
   const segmentsTempDir = path.join(tempDir, 'segments')
   const logsDir = path.join(dataRoot, 'logs')
-  const defaultDownloadsDir = path.join(storageRoot, 'downloads')
 
   const localResourcesBin = path.join(portableRoot, 'resources', 'bin')
   const packagedResourcesBin =

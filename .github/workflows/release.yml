@@ -1,4 +1,4 @@
-name: Build & Release Portable EXE
+name: Build & Release (Windows + macOS)
 
 on:
   push:
@@ -16,8 +16,8 @@ permissions:
   contents: write
 
 jobs:
-  build-windows-portable:
-    name: Windows x64 Single-File Portable EXE
+  build-windows:
+    name: Windows x64 Portable (.exe)
     runs-on: windows-latest
 
     env:
@@ -32,7 +32,7 @@ jobs:
         with:
           version: 11
 
-      - name: Setup Node.js 24 (includes built-in node:sqlite)
+      - name: Setup Node.js 24 (built-in node:sqlite)
         uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -41,18 +41,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download & verify companion media binaries (FFmpeg, FFprobe, N_m3u8DL-RE, yt-dlp)
+      - name: Download & verify Windows x64 media binaries
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/setup-binaries.mjs --force --ci
+        run: node scripts/setup-binaries.mjs --force --ci --platform=win32 --arch=x64
 
       - name: Run TypeScript typecheck
         run: pnpm run typecheck
 
-      - name: Run unit & E2E media pipeline tests
+      - name: Run unit & E2E media pipeline tests (Windows)
         run: pnpm test
 
-      - name: Sync version from git tag (when triggered by v* tag)
+      - name: Sync version from git tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
@@ -60,36 +60,112 @@ jobs:
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           $pkg.version = $tagVer
           $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json -Encoding UTF8
-          Write-Host "Building version $tagVer"
 
-      - name: Build single-file portable .exe
+      - name: Build single-file Windows portable .exe
         run: pnpm run package:exe
 
-      - name: Generate SHA-256 checksum
-        shell: pwsh
-        run: |
-          $exeFiles = Get-ChildItem -Path release -Filter "StreamGrabBrowser-Portable-*.exe"
-          if (-not $exeFiles) {
-            throw "Portable .exe was not found in release/"
-          }
-          $lines = foreach ($f in $exeFiles) {
-            $hash = (Get-FileHash -Path $f.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($f.Name)"
-          }
-          $lines | Set-Content -Path release\SHA256SUMS.txt -Encoding UTF8
-          Get-Content release\SHA256SUMS.txt
-
-      - name: Upload portable .exe as GitHub Actions artifact
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StreamGrabBrowser-Portable-win-x64
-          path: |
-            release/StreamGrabBrowser-Portable-*.exe
-            release/SHA256SUMS.txt
+          name: dist-windows
+          path: release/StreamGrabBrowser-Portable-*.exe
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish to GitHub Releases (on v* tag or manual draft request)
+  build-macos:
+    name: macOS Apple Silicon & Intel (.dmg + .zip)
+    runs-on: macos-latest
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js 24 (built-in node:sqlite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download & verify macOS Apple Silicon (arm64) media binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/setup-binaries.mjs --force --ci --platform=darwin --arch=arm64
+
+      - name: Run TypeScript typecheck
+        run: pnpm run typecheck
+
+      - name: Run unit & E2E media pipeline tests (macOS arm64)
+        run: pnpm test
+
+      - name: Sync version from git tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version='${TAG_VER}'; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n');"
+
+      - name: Build macOS Apple Silicon (arm64) .dmg & portable .zip
+        run: pnpm run package:mac:arm64
+
+      - name: Stage macOS Intel (x64) media binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -f resources/bin/ffmpeg resources/bin/ffprobe resources/bin/N_m3u8DL-RE resources/bin/yt-dlp
+          node scripts/setup-binaries.mjs --force --ci --platform=darwin --arch=x64 --skip-verify
+
+      - name: Build macOS Intel (x64) .dmg & portable .zip
+        run: pnpm run package:mac:x64
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: |
+            release/StreamGrabBrowser-macOS-*.dmg
+            release/StreamGrabBrowser-macOS-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Checksums & GitHub Release
+    needs:
+      - build-windows
+      - build-macos
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows & macOS build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+          merge-multiple: true
+
+      - name: Generate unified SHA256SUMS.txt
+        run: |
+          cd dist-all
+          sha256sum StreamGrabBrowser-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload combined release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamGrabBrowser-All-Platforms
+          path: dist-all/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Windows & macOS builds to GitHub Releases
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_draft_release == true)
         uses: softprops/action-gh-release@v2
         with:
@@ -97,5 +173,7 @@ jobs:
           draft: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           generate_release_notes: true
           files: |
-            release/StreamGrabBrowser-Portable-*.exe
-            release/SHA256SUMS.txt
+            dist-all/StreamGrabBrowser-Portable-*.exe
+            dist-all/StreamGrabBrowser-macOS-*.dmg
+            dist-all/StreamGrabBrowser-macOS-*.zip
+            dist-all/SHA256SUMS.txt

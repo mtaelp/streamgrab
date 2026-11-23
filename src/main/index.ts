@@ -282,9 +282,10 @@ function registerIpcHandlers(deps: {
 
 void app.whenReady().then(bootstrapApplication)
 
-app.on('window-all-closed', () => {
+app.on('before-quit', () => {
   dbService?.close()
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+})
+
+app.on('window-all-closed', () => {
+  app.quit()
 })

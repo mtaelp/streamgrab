@@ -3,6 +3,12 @@ import type { App } from 'electron'
 export function computeCleanChromeUserAgent(): string {
   const chromeVer = process.versions.chrome || '136.0.0.0'
   const major = chromeVer.split('.')[0] || '136'
+  if (process.platform === 'darwin') {
+    return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+  }
+  if (process.platform === 'linux') {
+    return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+  }
   return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
 }
 

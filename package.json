@@ -12,8 +12,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "setup:binaries": "node scripts/setup-binaries.mjs",
     "package:dir": "electron-vite build && electron-builder --win dir --publish never",
-    "package:exe": "electron-vite build && electron-builder --win portable --publish never",
+    "package:exe": "electron-vite build && electron-builder --win portable --x64 --publish never",
     "package:portable": "electron-vite build && electron-builder --win portable dir --publish never",
+    "package:mac:arm64": "electron-vite build && electron-builder --mac dmg zip --arm64 --publish never",
+    "package:mac:x64": "electron-vite build && electron-builder --mac dmg zip --x64 --publish never",
     "test": "vitest run"
   },
   "dependencies": {

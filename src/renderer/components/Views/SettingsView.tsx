@@ -260,7 +260,7 @@ export const SettingsView: React.FC = () => {
                 Portable Power Trio Binaries
               </h2>
               <p className="text-xs text-zinc-400">
-                Bundled inside resources/bin so your drive runs standalone on any Windows PC.
+                Bundled inside resources/bin so StreamGrab runs standalone on Windows &amp; macOS.
               </p>
             </div>
 
@@ -302,7 +302,9 @@ export const SettingsView: React.FC = () => {
                 className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 space-y-1"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-zinc-100">{bin.name}.exe</span>
+                  <span className="text-xs font-semibold text-zinc-100">
+                    {bin.path ? bin.path.split(/[\\/]/).pop() : bin.name}
+                  </span>
                   {bin.installed ? (
                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400">
                       <CheckCircle2 className="h-3.5 w-3.5" />

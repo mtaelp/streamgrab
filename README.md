@@ -2,16 +2,16 @@
 
 # StreamGrab Browser
 
-**A 100% portable, all-in-one desktop browser, native ad/popup shield, dual-layer stream sniffer, and 32–64 thread media downloader for Windows.**
+**A portable, all-in-one desktop browser, native ad/popup shield, dual-layer stream sniffer, and 32–64 thread media downloader for Windows & macOS.**
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?logo=windows&logoColor=white)](https://github.com/mtaelp/streamgrab/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20Portable%20EXE-0078D6?logo=windows&logoColor=white)](https://github.com/mtaelp/streamgrab/releases)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%26%20Intel-000000?logo=apple&logoColor=white)](https://github.com/mtaelp/streamgrab/releases)
 [![Release Build](https://github.com/mtaelp/streamgrab/actions/workflows/release.yml/badge.svg)](https://github.com/mtaelp/streamgrab/actions/workflows/release.yml)
 [![Electron](https://img.shields.io/badge/Electron-36-47848F?logo=electron&logoColor=white)](#architecture--how-it-works)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](#build-from-source)
-[![Portable](https://img.shields.io/badge/100%25-Portable%20Single%20EXE-10B981)](#quick-start-portable-exe)
 [![License: MIT](https://img.shields.io/badge/License-MIT-amber.svg)](#license)
 
-[Features](#-key-features) • [Screenshots](#-screenshots) • [Quick Start](#-quick-start-portable-exe) • [How It Works](#-architecture--how-it-works) • [Build from Source](#-build-from-source) • [GitHub Releases CI](#-automated-single-exe-releases-github-actions)
+[Features](#-key-features) • [Screenshots](#-screenshots) • [Download & Quick Start](#-download--quick-start-windows--macos) • [How It Works](#-architecture--how-it-works) • [Build from Source](#-build-from-source) • [GitHub Releases CI](#-automated-windows--macos-releases-github-actions)
 
 </div>
 
@@ -21,7 +21,7 @@
 
 ## Overview
 
-**StreamGrab Browser** combines a privacy-focused Chromium browser, real-time stream inspector, and high-concurrency download manager into a single, self-contained portable Windows application. Instead of juggling browser extensions, external CLI scripts, cookie exporters, and adblockers that break on cross-origin `<iframe>` players or `blob:` streams, everything runs natively under one roof:
+**StreamGrab Browser** combines a privacy-focused Chromium browser, real-time stream inspector, and high-concurrency download manager into a single, self-contained application for **Windows (`x64`)** and **macOS (`Apple Silicon` & `Intel`)**. Instead of juggling browser extensions, external CLI scripts, cookie exporters, and adblockers that break on cross-origin `<iframe>` players or `blob:` streams, everything runs natively under one roof:
 
 1. **Browse ad-free** with network-level adblocking and strict clickjacking/pop-under protection.
 2. **Play any video** (or paste a page URL into the **Headless Sniffer** without opening the page manually).
@@ -76,13 +76,24 @@ Configure up to **64 parallel connections per download** (defeating per-socket C
 
 ---
 
-## Quick Start (Portable `.exe`)
+## Download & Quick Start (Windows & macOS)
 
-1. Go to the [**Releases**](../../releases) page and download **`StreamGrabBrowser-Portable-<version>.exe`**.
-2. Place the `.exe` in any folder (e.g. `D:\StreamGrab\` or a USB SSD) and double-click it — **no installation or administrator rights required**.
-3. All 4 media binaries (`ffmpeg.exe`, `ffprobe.exe`, `N_m3u8DL-RE.exe`, `yt-dlp.exe`) are already bundled inside the `.exe`:
-   - `data/` and `downloads/` are created automatically right next to the `.exe`.
-   - Open any site, start playing a video, click the green **`Grab (N)`** button in the top-right toolbar, choose your resolution/audio/container, and click **`Grab`**.
+All 4 companion media binaries (`FFmpeg`, `FFprobe`, `N_m3u8DL-RE`, and `yt-dlp`) are **pre-bundled** inside every release package — no external installs needed.
+
+### Windows (`x64` Single-File Portable `.exe`)
+1. Download **`StreamGrabBrowser-Portable-<version>.exe`** from [**Releases**](https://github.com/mtaelp/streamgrab/releases).
+2. Place it in any folder (e.g. `D:\StreamGrab\` or a USB SSD) and double-click — **no installer or administrator rights required**.
+3. `data/` and `downloads/` are created automatically right next to the `.exe`.
+
+### macOS (`Apple Silicon M1–M4` & `Intel x64`)
+1. From [**Releases**](https://github.com/mtaelp/streamgrab/releases), download:
+   - **Apple Silicon (`M1` / `M2` / `M3` / `M4`):** `StreamGrabBrowser-macOS-arm64-<version>.dmg` *(or `.zip` for portable folder mode)*
+   - **Intel Mac (`x64`):** `StreamGrabBrowser-macOS-x64-<version>.dmg` *(or `.zip`)*
+2. Drag **`StreamGrab Browser.app`** to `/Applications` (uses `~/Library/Application Support/StreamGrabBrowser` & `~/Downloads/StreamGrab`), **or** extract the `.zip` into any custom folder/drive to run in self-contained portable mode.
+3. *First-launch Gatekeeper note (open-source ad-hoc signed build):* If macOS displays an "unidentified developer" prompt, clear the quarantine attribute once in Terminal:
+   ```bash
+   xattr -cr "/Applications/StreamGrab Browser.app"
+   ```
 
 ---
 
@@ -149,21 +160,21 @@ flowchart LR
 ## Build from Source
 
 ### Prerequisites
-- **Windows 10 / 11 (x64)**
+- **Windows 10 / 11 (`x64`)** or **macOS 12+ (`arm64` / `x64`)**
 - **Node.js 24+** (uses Node's built-in `node:sqlite`)
 - **pnpm 11+**
 
 ### Setup & Run
 
-```powershell
+```bash
 # 1. Clone the repository
 git clone https://github.com/mtaelp/streamgrab.git
 cd streamgrab
 
-# 2. Install dependencies (stored locally in .portable-env/)
+# 2. Install dependencies
 pnpm install
 
-# 3. Download & verify FFmpeg, FFprobe, N_m3u8DL-RE, and yt-dlp into resources/bin/
+# 3. Download & verify platform-native FFmpeg, FFprobe, N_m3u8DL-RE, and yt-dlp into resources/bin/
 pnpm run setup:binaries
 
 # 4. Run TypeScript checks & automated unit + E2E tests
@@ -171,36 +182,39 @@ pnpm run typecheck
 pnpm test
 
 # 5. Launch in development mode
-.\start-dev.cmd
+pnpm run dev        # macOS / Windows
+# (or .\start-dev.cmd on Windows)
 ```
 
-### Package Standalone Portable `.exe` Locally
+### Package Standalone Builds Locally
 
-```powershell
-# Produces a single self-contained executable: release/StreamGrabBrowser-Portable-1.0.0.exe
+```bash
+# Windows x64 single-file portable executable -> release/StreamGrabBrowser-Portable-1.0.0.exe
 pnpm run package:exe
 
-# Or build both the single-file .exe and unpacked folder via batch script:
-.\build-portable.cmd
+# macOS Apple Silicon (arm64) .dmg + portable .zip
+pnpm run package:mac:arm64
+
+# macOS Intel (x64) .dmg + portable .zip
+pnpm run package:mac:x64
 ```
 
 ---
 
-## Automated Single-EXE Releases (GitHub Actions)
+## Automated Windows & macOS Releases (GitHub Actions)
 
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the complete single-file portable executable in the cloud on `windows-latest`:
+[.github/workflows/release.yml](.github/workflows/release.yml) runs a parallel multi-OS matrix on `windows-latest` and `macos-latest`:
 
-1. Installs `Node 24` + `pnpm 11` and project dependencies.
-2. Runs `node scripts/setup-binaries.mjs --force --ci` to fetch the latest Windows x64 `ffmpeg.exe`, `ffprobe.exe`, `N_m3u8DL-RE.exe`, and `yt-dlp.exe`.
-3. Runs `pnpm run typecheck` and `pnpm test` (including live AES-128 HLS decryption & FFmpeg muxing verification).
-4. Packages `StreamGrabBrowser-Portable-<version>.exe` + `SHA256SUMS.txt` and attaches them to a **GitHub Release** whenever you push a `v*` tag:
+1. Fetches & verifies platform-native `FFmpeg`, `FFprobe`, `N_m3u8DL-RE`, and `yt-dlp` binaries for **Windows (`x64`)**, **macOS Apple Silicon (`arm64`)**, and **macOS Intel (`x64`)**.
+2. Runs `pnpm run typecheck` and `pnpm test` (executing live AES-128 HLS decryption & FFmpeg muxing E2E tests on **both** Windows and macOS runners).
+3. Packages `StreamGrabBrowser-Portable-<version>.exe`, `StreamGrabBrowser-macOS-arm64-<version>.dmg`/`.zip`, `StreamGrabBrowser-macOS-x64-<version>.dmg`/`.zip`, and `SHA256SUMS.txt`, publishing them to **GitHub Releases** whenever you push a `v*` tag:
 
-```powershell
+```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-You can also trigger a build manually anytime via **Actions -> Build & Release Portable EXE -> Run workflow** (with an optional checkbox to publish a draft release).
+You can also trigger a build manually anytime via **Actions -> Build & Release (Windows + macOS) -> Run workflow**.
 
 ---
 
