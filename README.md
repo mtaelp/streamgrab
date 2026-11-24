@@ -44,8 +44,9 @@
 | **`DirectRangeEngine`** | Direct `.mp4`, `.mkv`, `.webm`, `.zip`, `.exe` files | Built-in 16–64 thread HTTP `Range` splitter with dynamic work-stealing (halves the slowest remaining chunk) and SQLite WAL crash-safe resume |
 | **`yt-dlp` + Cookie Jar** | 1,000+ streaming platforms & complex extractors | Deep-scans pages on demand while automatically exporting live Chromium `HttpOnly` session & age-gate cookies in Netscape format |
 
-### Native Adblock & Strict Anti-Popup Shield
-- Powered by `@ghostery/adblocker-electron` (**EasyList**, **EasyPrivacy**, **uBlock**, **Peter Lowe**, **AdGuard Regional**, and **AdGuard Popups** filters) for network + cosmetic banner/pre-roll blocking.
+### Brave-Powered Adblock, Zero-Ad YouTube & Strict Anti-Popup Shield
+- Powered by **Brave Browser's open-source Shields filter lists** (`brave-specific`, `brave-unbreak`, `brave-sugarcoat`), live **uBlock Origin `uAssets`** (`filters-2025`, `filters-2026`, daily `quick-fixes`), **EasyList / EasyPrivacy**, and **AdGuard Regional & Popups** with automatic 12-hour background refresh.
+- **Synchronous `document_start` YouTube Ad Shield:** Prunes `adPlacements` / `playerAds` / `adSlots` from `ytInitialPlayerResponse` and `/youtubei/v1/player` responses before YouTube's player boots, injects Blink user-origin CSS (invisible to DOM anti-adblock checks), and auto-skips server-stitched ad slots.
 - **Strict `PopupGuard`:** Blocks both 0-day cross-origin ad popups *and* sneaky same-domain `302` redirector popups triggered by invisible overlays over video players, while keeping genuine OAuth login dialogs (`Google`, `GitHub`, `Microsoft`, `Apple`, `Discord`) working and offering a non-intrusive `[Open Tab]` toast button when needed.
 
 ### Mid-Download `403` Token Auto-Refresh

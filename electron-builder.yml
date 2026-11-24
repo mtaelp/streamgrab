@@ -26,6 +26,7 @@ extraResources:
       - '!.gitkeep'
 asarUnpack:
   - '**/*.node'
+  - '**/node_modules/@ghostery/adblocker-electron-preload/**/*'
 win:
   executableName: StreamGrabBrowser
   signAndEditExecutable: false

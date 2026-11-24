@@ -9,6 +9,7 @@ const randSuffix = `${Math.random().toString(36).slice(2)}_${Date.now().toString
 const BLOB_EVENT = `__sg_b_${randSuffix}`
 const META_EVENT = `__sg_m_${randSuffix}`
 const DIAG_EVENT = `__sg_d_${randSuffix}`
+const YT_AD_EVENT = `__sg_y_${randSuffix}`
 
 window.addEventListener(
   BLOB_EVENT,
@@ -60,6 +61,209 @@ window.addEventListener(
   },
   true
 )
+
+window.addEventListener(
+  YT_AD_EVENT,
+  (ev: Event) => {
+    const custom = ev as CustomEvent<{ count: number }>
+    ipcRenderer.send('sg-internal:youtube-ad-pruned', custom.detail?.count || 1)
+  },
+  true
+)
+
+// Brave-Style Synchronous document_start YouTube Ad & Anti-Adblock Shield
+try {
+  const host = (location.hostname || '').toLowerCase()
+  const isYouTubeHost =
+    host === 'youtube.com' ||
+    host.endsWith('.youtube.com') ||
+    host === 'youtube-nocookie.com' ||
+    host.endsWith('.youtube-nocookie.com') ||
+    host === 'youtubekids.com' ||
+    host.endsWith('.youtubekids.com')
+
+  if (isYouTubeHost) {
+    const shieldEnabled = Boolean(
+      ipcRenderer.sendSync('sg-internal:should-shield-frame', location.href)
+    )
+    if (shieldEnabled) {
+      // 1. Blink user-origin CSS (leaves zero <style> nodes in DOM so anti-adblock scripts cannot detect it)
+      webFrame.insertCSS(
+        `
+        ytd-ad-slot-renderer,
+        ytd-in-feed-ad-layout-renderer,
+        ytd-banner-promo-renderer,
+        ytd-statement-banner-renderer,
+        ytd-display-ad-renderer,
+        ytd-promoted-sparkles-web-renderer,
+        ytd-promoted-video-renderer,
+        ytd-compact-promoted-video-renderer,
+        ytd-action-companion-ad-renderer,
+        ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
+        ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer),
+        ytm-promoted-sparkles-web-renderer,
+        #masthead-ad,
+        #player-ads,
+        #merch-shelf,
+        .ytd-mealbar-promo-renderer,
+        .ytp-ad-overlay-container,
+        .ytp-ad-message-container,
+        .ytp-featured-product {
+          display: none !important;
+        }
+        `,
+        { cssOrigin: 'user' }
+      )
+
+      // 2. Synchronous T=0 Main-World Player JSON Ad-Pruner (Brave / uBlock json-prune technique)
+      const ytShieldCode = `(() => {
+        try {
+          const YT_AD_EVENT = ${JSON.stringify(YT_AD_EVENT)};
+          const AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+
+          const prunePlayerPayload = (obj) => {
+            if (!obj || typeof obj !== 'object') return obj;
+            let pruned = 0;
+            for (const k of AD_KEYS) {
+              if (k in obj && obj[k] !== undefined) {
+                delete obj[k];
+                pruned++;
+              }
+            }
+            if (obj.playerResponse && typeof obj.playerResponse === 'object') {
+              for (const k of AD_KEYS) {
+                if (k in obj.playerResponse) {
+                  delete obj.playerResponse[k];
+                  pruned++;
+                }
+              }
+            }
+            if (Array.isArray(obj.onResponseReceivedEndpoints)) {
+              for (const ep of obj.onResponseReceivedEndpoints) {
+                if (ep && typeof ep === 'object' && ep.reloadContinuationItemsCommand) {
+                  const items = ep.reloadContinuationItemsCommand.continuationItems;
+                  if (Array.isArray(items)) {
+                    ep.reloadContinuationItemsCommand.continuationItems = items.filter(
+                      (it) => !(it && (it.adSlotRenderer || it.SearchPyvRenderer))
+                    );
+                  }
+                }
+              }
+            }
+            if (pruned > 0) {
+              try {
+                window.dispatchEvent(new CustomEvent(YT_AD_EVENT, { detail: { count: 1 } }));
+              } catch {}
+            }
+            return obj;
+          };
+
+          // Trap inline <head> window.ytInitialPlayerResponse & window.ytInitialData before Polymer boots
+          for (const globalProp of ['ytInitialPlayerResponse', 'ytInitialData']) {
+            let currentVal = window[globalProp];
+            if (currentVal && typeof currentVal === 'object') {
+              prunePlayerPayload(currentVal);
+            }
+            try {
+              Object.defineProperty(window, globalProp, {
+                configurable: true,
+                enumerable: true,
+                get() {
+                  return currentVal;
+                },
+                set(nextVal) {
+                  currentVal = prunePlayerPayload(nextVal);
+                }
+              });
+            } catch {}
+          }
+
+          const isYtPlayerApi = (u) =>
+            typeof u === 'string' &&
+            (u.includes('/youtubei/v1/player') || u.includes('/youtubei/v1/next'));
+
+          // Prune SPA fetch() responses for /youtubei/v1/player and /youtubei/v1/next
+          const origJson = Response.prototype.json;
+          Response.prototype.json = async function () {
+            const data = await origJson.apply(this, arguments);
+            try {
+              if (isYtPlayerApi(this.url)) {
+                return prunePlayerPayload(data);
+              }
+            } catch {}
+            return data;
+          };
+
+          const origText = Response.prototype.text;
+          Response.prototype.text = async function () {
+            const txt = await origText.apply(this, arguments);
+            try {
+              if (isYtPlayerApi(this.url) && txt && txt.charCodeAt(0) === 123) {
+                const parsed = JSON.parse(txt);
+                prunePlayerPayload(parsed);
+                return JSON.stringify(parsed);
+              }
+            } catch {}
+            return txt;
+          };
+
+          // Instant fallback skipper if a server-stitched ad frame ever enters #movie_player
+          let mutedByShield = false;
+          const skipServerStitchedAd = () => {
+            try {
+              const player = document.getElementById('movie_player');
+              if (!player) return;
+              const video = player.querySelector('video.html5-main-video') || player.querySelector('video');
+              const isAd =
+                player.classList.contains('ad-showing') ||
+                player.classList.contains('ad-interrupting');
+              if (!isAd) {
+                if (mutedByShield && video) {
+                  mutedByShield = false;
+                  video.muted = false;
+                }
+                return;
+              }
+
+              const skipBtn = player.querySelector(
+                '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-overlay-close-button'
+              );
+              if (skipBtn && typeof skipBtn.click === 'function') {
+                skipBtn.click();
+              }
+
+              if (video && Number.isFinite(video.duration) && video.duration > 0 && video.duration < 300) {
+                if (!video.muted) {
+                  video.muted = true;
+                  mutedByShield = true;
+                }
+                video.currentTime = video.duration;
+              }
+            } catch {}
+          };
+
+          const attachAdObserver = () => {
+            const obs = new MutationObserver(skipServerStitchedAd);
+            obs.observe(document.documentElement, {
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['class']
+            });
+          };
+          if (document.documentElement) {
+            attachAdObserver();
+          } else {
+            document.addEventListener('DOMContentLoaded', attachAdObserver, { once: true });
+          }
+        } catch {}
+      })();`
+
+      void webFrame.executeJavaScript(ytShieldCode, false)
+    }
+  }
+} catch {
+  // Ignore restricted/sandboxed frames
+}
 
 const mainWorldHookCode = `(() => {
   try {
