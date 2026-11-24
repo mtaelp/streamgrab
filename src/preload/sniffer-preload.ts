@@ -158,25 +158,24 @@ try {
             return obj;
           };
 
-          // Trap inline <head> window.ytInitialPlayerResponse & window.ytInitialData before Polymer boots
-          for (const globalProp of ['ytInitialPlayerResponse', 'ytInitialData']) {
-            let currentVal = window[globalProp];
-            if (currentVal && typeof currentVal === 'object') {
-              prunePlayerPayload(currentVal);
-            }
-            try {
-              Object.defineProperty(window, globalProp, {
-                configurable: true,
-                enumerable: true,
-                get() {
-                  return currentVal;
-                },
-                set(nextVal) {
-                  currentVal = prunePlayerPayload(nextVal);
-                }
-              });
-            } catch {}
+          // Trap inline <head> window.ytInitialPlayerResponse before Polymer boots
+          // (Note: never wrap window.ytInitialData setter — Polymer mutates ytInitialData deeply during UI hydration)
+          let currentPrVal = window.ytInitialPlayerResponse;
+          if (currentPrVal && typeof currentPrVal === 'object') {
+            prunePlayerPayload(currentPrVal);
           }
+          try {
+            Object.defineProperty(window, 'ytInitialPlayerResponse', {
+              configurable: true,
+              enumerable: true,
+              get() {
+                return currentPrVal;
+              },
+              set(nextVal) {
+                currentPrVal = prunePlayerPayload(nextVal);
+              }
+            });
+          } catch {}
 
           const isYtPlayerApi = (u) =>
             typeof u === 'string' &&
@@ -688,7 +687,18 @@ const mainWorldHookCode = `(() => {
 })();`
 
 try {
-  void webFrame.executeJavaScript(mainWorldHookCode, false)
+  // Skip raw HLS/DASH Blob & fetch stream-cloning hooks on YouTube (handled natively via yt-dlp,
+  // and YouTube's TrustedTypes + Polymer SVG icon loader stream responses directly)
+  const frameHost = (location.hostname || '').toLowerCase()
+  const skipRawBlobHooks =
+    frameHost === 'youtube.com' ||
+    frameHost.endsWith('.youtube.com') ||
+    frameHost === 'youtube-nocookie.com' ||
+    frameHost.endsWith('.youtube-nocookie.com')
+
+  if (!skipRawBlobHooks) {
+    void webFrame.executeJavaScript(mainWorldHookCode, false)
+  }
 } catch {
   // Ignore sandboxed data frames where script injection is disallowed
 }

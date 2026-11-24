@@ -212,16 +212,69 @@ export class AdblockService {
 
     this.blocker.enableBlockingInSession(proxiedSession)
 
-    // Wrap Ghostery's cosmetic & scriptlet IPC handler so disabling Shield or whitelisting a domain
-    // also skips CSS & +js(...) scriptlet injection cleanly!
+    // Wrap Ghostery's cosmetic & scriptlet IPC handler:
+    // 1. Respect global Shield toggle and per-domain whitelist.
+    // 2. On YouTube domains, inject CSS rules ONLY and skip Ghostery's raw +js(...) scriptlets
+    //    (Ghostery v2.13 injects uAssets 2026 JSONPath scriptlets in global scope without IIFE isolation,
+    //    throwing "SyntaxError: Identifier 'JSONPath' has already been declared" & breaking ytInitialData).
+    //    YouTube ad-pruning is handled cleanly at document_start by sniffer-preload.ts instead.
+    // 3. On all other sites, wrap each scriptlet in an isolated IIFE so top-level declarations never collide.
     ipcMain.removeHandler('@ghostery/adblocker/inject-cosmetic-filters')
-    ipcMain.handle('@ghostery/adblocker/inject-cosmetic-filters', async (event, url: string, msg: unknown) => {
-      if (!this.shouldShieldUrl(url, event.sender?.id)) {
-        return
+    ipcMain.handle(
+      '@ghostery/adblocker/inject-cosmetic-filters',
+      async (
+        event,
+        url: string,
+        msg?: { classes?: string[]; hrefs?: string[]; ids?: string[]; lifecycle?: string }
+      ) => {
+        if (!this.blocker || !this.shouldShieldUrl(url, event.sender?.id)) {
+          return
+        }
+
+        const host = extractHostname(url) || ''
+        const isYouTube =
+          host === 'youtube.com' ||
+          host.endsWith('.youtube.com') ||
+          host === 'youtube-nocookie.com' ||
+          host.endsWith('.youtube-nocookie.com') ||
+          host === 'youtubekids.com' ||
+          host.endsWith('.youtubekids.com')
+
+        const isFirstRun = msg === undefined
+        const parts = host.split('.')
+        const domain = parts.length > 2 ? parts.slice(-2).join('.') : host
+
+        const { active, styles, scripts } = this.blocker.getCosmeticsFilters({
+          url,
+          hostname: host,
+          domain,
+          classes: msg?.classes,
+          hrefs: msg?.hrefs,
+          ids: msg?.ids,
+          getBaseRules: isFirstRun,
+          getInjectionRules: isFirstRun && !isYouTube,
+          getExtendedRules: false,
+          getRulesFromHostname: isFirstRun,
+          getRulesFromDOM: !isFirstRun,
+          callerContext: {
+            frameId: event.frameId,
+            processId: event.processId,
+            lifecycle: msg?.lifecycle
+          }
+        })
+
+        if (active === false) return
+        if (styles && styles.length > 0) {
+          void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
+        }
+        if (!isYouTube && scripts && scripts.length > 0) {
+          for (const script of scripts) {
+            const isolatedScript = `(() => { try {\n${script}\n} catch {} })();`
+            void event.sender.executeJavaScript(isolatedScript, true).catch(() => {})
+          }
+        }
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (this.blocker as any).onInjectCosmeticFilters(event, url, msg)
-    })
+    )
   }
 
   public isPopupUrlBlocked(targetUrl: string, sourceUrl: string): boolean {
